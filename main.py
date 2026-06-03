@@ -19,6 +19,7 @@ COLORS = {
     'lime': '\033[38;2;194;254;11m',
     'cyan': '\033[38;2;1;255;255m',
     'orange': '\033[38;2;255;13;26m',
+    'yellow': '\033[38;2;255;255;0m',
     'slate': '\033[38;2;41;50;79m',
     'bright_green': '\033[38;2;89;180;29m',
     'reset': '\033[0m',
@@ -34,6 +35,7 @@ history_points = []
 MAX_HISTORY_POINTS = 16
 STATS_BOX_HEIGHT = 7  # top border + title + separator + 3 data rows + bottom border
 previous_status = None
+is_refreshing = False
 
 data_lock = threading.Lock()
 display_lock = threading.Lock()
@@ -80,42 +82,74 @@ def get_terminal_width(default: int = 80) -> int:
     except Exception:
         return default
 
-def update_refresh_indicator(message: str):
-    """Write a temporary refresh status on the reserved footer line."""
-    with display_lock:
-        sys.stdout.write("\033[s")
-        sys.stdout.write("\033[2K")
-        sys.stdout.write(message)
-        sys.stdout.write("\033[u")
-        sys.stdout.flush()
+def set_refreshing(state: bool):
+    """Set the refresh state flag."""
+    global is_refreshing
+    with data_lock:
+        is_refreshing = state
 
-def show_refresh_indicator():
-    update_refresh_indicator(f"{COLORS['cyan']}  ⟳ Refreshing data...{COLORS['reset']}")
 
-def clear_refresh_indicator():
-    update_refresh_indicator("")
-
+def get_status_color(status):
+    """Get the color for a given status."""
+    status_key = str(status or "unknown").lower()
+    if status_key == "outage":
+        return COLORS['orange']
+    elif status_key == "degraded":
+        return COLORS['yellow']
+    elif status_key in ("online", "operational", "all systems operational"):
+        return COLORS['bright_green']
+    elif status_key == "maintenance":
+        return COLORS['orange']
+    elif status_key == "checking":
+        return COLORS['cyan']
+    else:
+        return COLORS['cyan']
 
 def render_vertical_bar_chart(values, height=5, width=8):
-    """Render a vertical bar chart to fill the box height."""
+    """Render a vertical bar chart with status-based coloring."""
     points = list(values[-width:])
     if not points:
-        points = [0] * width
-    clean_values = [v for v in points if v is not None]
+        points = [{"count": 0, "status": "unknown"}] * width
+
+    # Pad with None values at the start if we don't have enough data points
+    while len(points) < width:
+        points.insert(0, None)
+
+    # Extract counts and statuses
+    counts = []
+    statuses = []
+    for point in points:
+        if point is None:
+            counts.append(None)
+            statuses.append("unknown")
+        else:
+            counts.append(point.get("count") if isinstance(point, dict) else point)
+            statuses.append(point.get("status", "unknown") if isinstance(point, dict) else "unknown")
+
+    clean_values = [v for v in counts if v is not None]
     if not clean_values:
         clean_values = [0]
     min_v = min(clean_values)
     max_v = max(clean_values)
     span = max_v - min_v or 1
     heights = []
-    for value in points:
+    for value in counts:
         if value is None:
             heights.append(0)
         else:
             heights.append(int((value - min_v) / span * (height - 1)) + 1)
+
+    # Build rows with colored bars
     rows = []
     for row in range(height, 0, -1):
-        rows.append(''.join('▇' if h >= row else '·' for h in heights))
+        row_chars = []
+        for i, h in enumerate(heights):
+            if h >= row:
+                color = get_status_color(statuses[i])
+                row_chars.append(f"{color}▇{COLORS['reset']}")
+            else:
+                row_chars.append(f"{COLORS['cyan']}·{COLORS['reset']}")
+        rows.append(''.join(row_chars))
     return rows
 
 
@@ -144,7 +178,7 @@ def format_marathon_status_line(status: str, reports: int) -> tuple[str, str]:
     if status_key == "outage":
         return ("OUTAGE", COLORS['orange'])
     if status_key == "degraded":
-        return ("DEGRADED", COLORS['orange'])
+        return ("DEGRADED", COLORS['yellow'])
     if status_key in ("online", "operational", "all systems operational"):
         return ("ONLINE", COLORS['bright_green'])
     if status_key == "maintenance":
@@ -154,10 +188,10 @@ def format_marathon_status_line(status: str, reports: int) -> tuple[str, str]:
     return (status_key.upper(), COLORS['cyan'])
 
 
-def append_history_point(value):
-    """Append a new history point, keeping the history bounded."""
+def append_history_point(value, status="unknown"):
+    """Append a new history point with status, keeping the history bounded."""
     with data_lock:
-        history_points.append(value)
+        history_points.append({"count": value, "status": status})
         if len(history_points) > MAX_HISTORY_POINTS:
             history_points.pop(0)
 
@@ -234,14 +268,30 @@ def animate_loading_bar(duration: float = 1.0, width: int = 40):
     sys.stdout.flush()
 
 def animate_status_ripple(width: int, status_color: str, speed: float = 0.015):
-    """Animate a ripple effect across the status line."""
+    """Animate a ripple effect across both top and bottom status border lines."""
     c = COLORS
-    for i in range(width):
-        sys.stdout.write(f"\r{c['slate']}{'='*i}{status_color}{'='*(width-i)}{c['reset']}")
+    for i in range(width + 1):
+        # Save cursor, move up 2 lines to top border
+        sys.stdout.write("\033[s")
+        sys.stdout.write("\033[2A")
+        # Animate top border - growing status color from left
+        sys.stdout.write(f"\r{status_color}{'='*i}{c['slate']}{'='*(width-i)}{c['reset']}")
+        # Move down 2 lines to bottom border
+        sys.stdout.write("\033[2B")
+        # Animate bottom border - growing status color from left
+        sys.stdout.write(f"\r{status_color}{'='*i}{c['slate']}{'='*(width-i)}{c['reset']}")
+        # Restore cursor
+        sys.stdout.write("\033[u")
         sys.stdout.flush()
         time.sleep(speed)
-    time.sleep(0.1)
-    sys.stdout.write(f"\r{c['slate']}{'='*width}{c['reset']}")
+
+    # Final state: both lines in status color
+    sys.stdout.write("\033[s")
+    sys.stdout.write("\033[2A")
+    sys.stdout.write(f"\r{status_color}{'='*width}{c['reset']}")
+    sys.stdout.write("\033[2B")
+    sys.stdout.write(f"\r{status_color}{'='*width}{c['reset']}")
+    sys.stdout.write("\033[u")
     sys.stdout.flush()
 
 def blink_status_text(duration: float = 0.3):
@@ -284,17 +334,28 @@ def print_motd(server_line=None):
     sys.stdout.write(f"{c['slate']}{'='*width}{c['reset']}\n")
     sys.stdout.flush()
 
-def render_stats_box(result: dict, last_update: datetime, history=None):
+def render_stats_box(result: dict, last_update: datetime, history=None, refreshing=False):
     """Render the stats box with current data, and graph to the right."""
     if history is None:
         history = []
     c = COLORS
     terminal_width = get_terminal_width(80)
     BOX_WIDTH = max(30, terminal_width // 2)  # At least 30 chars for the box
-    GRAPH_BARS = 16  # Number of bars in the chart
+    GRAPH_WIDTH = terminal_width - BOX_WIDTH - 3  # Remaining space for graph (minus padding)
     GRAPH_PADDING = 2  # Spacing between box and graph
+    content_width = BOX_WIDTH - 2  # Account for box borders
 
-    title_line = f"{c['bold']}RUNNER STATS{c['reset']}"
+    # Build title line with optional refresh indicator
+    if refreshing:
+        refresh_text = f"{c['cyan']}⟳{c['reset']}"
+        title_base = f"{c['bold']}RUNNER STATS{c['reset']}"
+        # Calculate spacing to right-justify the refresh indicator
+        title_visible_len = len("RUNNER STATS")
+        spacing = content_width - 2 - title_visible_len - 1  # -2 for padding, -1 for refresh icon
+        title_line = f"{title_base}{' '*spacing}{refresh_text}"
+    else:
+        title_line = f"{c['bold']}RUNNER STATS{c['reset']}"
+
     elapsed = (datetime.now() - last_update).seconds
     sync_line = f"{c['slate']}Last Sync:{c['reset']} {c['cyan']}{elapsed}s ago{c['reset']}"
 
@@ -306,52 +367,59 @@ def render_stats_box(result: dict, last_update: datetime, history=None):
         error_line = f"{c['orange']}⚠ ERROR: {result.get('error', 'unknown')}{c['reset']}"
         appid_line = f"{c['slate']}App ID:{c['reset']} {c['cyan']}{MARATHON_APP_ID}{c['reset']}"
         left_rows = [title_line, error_line, appid_line, sync_line]
-
-    content_width = BOX_WIDTH - 2  # Account for box borders
-    graph_rows = render_vertical_bar_chart(history, height=5, width=GRAPH_BARS)
+    graph_rows = render_vertical_bar_chart(history, height=6, width=GRAPH_WIDTH)
 
     # Top border
     sys.stdout.write(f"{c['cyan']}┌{'─'*content_width}┐{c['reset']}{' '*GRAPH_PADDING}")
     sys.stdout.write(f"{c['slate']}Player Count History{c['reset']}\n")
 
-    # Content rows
+    # Content rows (4 data rows to match left_rows length)
+    graph_idx = 0
     for i in range(len(left_rows)):
         row_text = left_rows[i]
-        graph_text = graph_rows[i] if i < len(graph_rows) else '·' * GRAPH_BARS
+        graph_text = graph_rows[graph_idx] if graph_idx < len(graph_rows) else '·' * GRAPH_WIDTH
         sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + row_text, content_width)}{c['cyan']}│{c['reset']}")
-        sys.stdout.write(f"{' '*GRAPH_PADDING}{c['cyan']}{graph_text}{c['reset']}\n")
+        sys.stdout.write(f"{' '*GRAPH_PADDING}{graph_text}\n")
+        graph_idx += 1
         if i == 0:
-            sys.stdout.write(f"{c['cyan']}├{'─'*content_width}┤{c['reset']}\n")
+            # Print separator line with graph row
+            graph_text = graph_rows[graph_idx] if graph_idx < len(graph_rows) else '·' * GRAPH_WIDTH
+            sys.stdout.write(f"{c['cyan']}├{'─'*content_width}┤{c['reset']}")
+            sys.stdout.write(f"{' '*GRAPH_PADDING}{graph_text}\n")
+            graph_idx += 1
 
-    # Bottom border
-    sys.stdout.write(f"{c['cyan']}└{'─'*content_width}┘{c['reset']}\n")
+    # Bottom border with final graph row
+    graph_text = graph_rows[graph_idx] if graph_idx < len(graph_rows) else '·' * GRAPH_WIDTH
+    sys.stdout.write(f"{c['cyan']}└{'─'*content_width}┘{c['reset']}")
+    sys.stdout.write(f"{' '*GRAPH_PADDING}{graph_text}\n")
     sys.stdout.flush()
 
 def update_display():
     """Update only the stats box without clearing the screen."""
-    global current_data, last_fetch_time
-    
+    global current_data, last_fetch_time, is_refreshing
+
     with data_lock:
         result = current_data.copy()
         last_update = last_fetch_time
         history_snapshot = history_points.copy()
-    
+        refreshing = is_refreshing
+
     with display_lock:
         sys.stdout.write("\033[s")
         sys.stdout.write(f"\033[{STATS_BOX_HEIGHT}A")
-        render_stats_box(result, last_update, history_snapshot)
+        render_stats_box(result, last_update, history_snapshot, refreshing)
         sys.stdout.write("\033[u")
         sys.stdout.flush()
 
 def data_fetcher(update_interval: int = 60):
     """Background thread that fetches data periodically."""
     global current_data, last_fetch_time, running, previous_status
-    
+
     while running:
-        show_refresh_indicator()
+        set_refreshing(True)
         player_result = get_current_players(MARATHON_APP_ID)
         status_result = get_marathon_server_status()
-        clear_refresh_indicator()
+        set_refreshing(False)
         
         combined_result = {
             "success": player_result.get("success", False),
@@ -364,18 +432,15 @@ def data_fetcher(update_interval: int = 60):
         }
         
         new_status = combined_result.get("marathon_status", "unknown")
-        if previous_status is not None and new_status != previous_status:
-            _, status_color = format_marathon_status_line(new_status, combined_result.get('reports_10m', 0))
-            width = get_terminal_width(80)
-            animate_status_ripple(width, status_color)
-            time.sleep(0.2)
-            blink_status_text()
-        
+
         with data_lock:
             current_data = combined_result
             last_fetch_time = datetime.now()
             previous_status = new_status
-        append_history_point(combined_result['count'] if combined_result.get('success') else None)
+        append_history_point(
+            combined_result['count'] if combined_result.get('success') else None,
+            combined_result.get('marathon_status', 'unknown')
+        )
         
         time.sleep(update_interval)
 
@@ -389,7 +454,7 @@ def live_monitor(update_interval: int = 60):
     player_result = get_current_players(MARATHON_APP_ID)
     status_result = get_marathon_server_status()
     status_label, status_color = format_marathon_status_line(status_result.get('status', 'unknown'), status_result.get('reports_10m', 0))
-    server_line = f"{COLORS['slate']}SERVER STATUS:{COLORS['reset']} {status_color}{status_label}{COLORS['reset']}"
+    server_line = f"{COLORS['reset']}SERVER STATUS:{COLORS['reset']} {status_color}{status_label}{COLORS['reset']}"
     if status_result.get('reports_10m', 0):
         server_line = f"{server_line} {COLORS['slate']}({status_result['reports_10m']} rpt){COLORS['reset']}"
     
@@ -408,14 +473,11 @@ def live_monitor(update_interval: int = 60):
     with data_lock:
         current_data = combined_result
         previous_status = combined_result.get("marathon_status", "unknown")
-    append_history_point(combined_result['count'] if combined_result.get('success') else None)
-    
-    # Trigger initial ripple animation on the existing === line
-    status_label, status_color = format_marathon_status_line(combined_result.get("marathon_status", "unknown"), combined_result.get('reports_10m', 0))
-    width = get_terminal_width(80)
-    animate_status_ripple(width, status_color)
-    time.sleep(0.2)
-    
+    append_history_point(
+        combined_result['count'] if combined_result.get('success') else None,
+        combined_result.get('marathon_status', 'unknown')
+    )
+
     sys.stdout.write("\n")
     sys.stdout.flush()
     
