@@ -7,7 +7,7 @@
 Open **Windows Terminal** or **PowerShell** and run:
 
 ```powershell
-irm https://raw.githubusercontent.com/yourusername/marathon-cli/main/install-simple.ps1 | iex
+irm https://raw.githubusercontent.com/parkerbailey/marathon-cli/main/install-simple.ps1 | iex
 ```
 
 ### Method 2: Interactive Install
@@ -15,13 +15,13 @@ irm https://raw.githubusercontent.com/yourusername/marathon-cli/main/install-sim
 For more options (pipx, user install, global install):
 
 ```powershell
-irm https://raw.githubusercontent.com/yourusername/marathon-cli/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/parkerbailey/marathon-cli/main/install.ps1 | iex
 ```
 
 ### Method 3: Direct pip Install
 
 ```powershell
-pip install git+https://github.com/yourusername/marathon-cli.git
+pip install git+https://github.com/parkerbailey/marathon-cli.git
 ```
 
 ---
@@ -62,7 +62,7 @@ python -m pip install --user pipx
 python -m pipx ensurepath
 
 # Restart terminal, then:
-pipx install git+https://github.com/yourusername/marathon-cli.git
+pipx install git+https://github.com/parkerbailey/marathon-cli.git
 ```
 
 **Advantages:**
@@ -73,7 +73,7 @@ pipx install git+https://github.com/yourusername/marathon-cli.git
 ### Option B: User Install
 
 ```powershell
-pip install --user git+https://github.com/yourusername/marathon-cli.git
+pip install --user git+https://github.com/parkerbailey/marathon-cli.git
 ```
 
 **Advantages:**
@@ -84,7 +84,7 @@ pip install --user git+https://github.com/yourusername/marathon-cli.git
 
 ```powershell
 # May require admin (Run as Administrator)
-pip install git+https://github.com/yourusername/marathon-cli.git
+pip install git+https://github.com/parkerbailey/marathon-cli.git
 ```
 
 ### Option D: From Wheel (Offline)
@@ -175,7 +175,7 @@ python -m marathon_cli
 
 Run PowerShell as Administrator or use `--user` flag:
 ```powershell
-pip install --user git+https://github.com/yourusername/marathon-cli.git
+pip install --user git+https://github.com/parkerbailey/marathon-cli.git
 ```
 
 ### pip Not Found
@@ -183,7 +183,7 @@ pip install --user git+https://github.com/yourusername/marathon-cli.git
 1. Reinstall Python with "Add to PATH" checked
 2. Or use full path:
    ```powershell
-   python -m pip install git+https://github.com/yourusername/marathon-cli.git
+   python -m pip install git+https://github.com/parkerbailey/marathon-cli.git
    ```
 
 ---
@@ -197,7 +197,7 @@ For the best experience on Windows, use WSL:
 wsl --install
 
 # After restart, in WSL:
-pip install git+https://github.com/yourusername/marathon-cli.git
+pip install git+https://github.com/parkerbailey/marathon-cli.git
 marathon-cli
 ```
 
@@ -236,6 +236,6 @@ marathon-cli status
 
 ## Support
 
-- **GitHub Issues**: https://github.com/yourusername/marathon-cli/issues
+- **GitHub Issues**: https://github.com/parkerbailey/marathon-cli/issues
 - **Requires**: Python 3.8+, Internet connection
 - **Works best with**: Windows Terminal, WSL, or PowerShell 7+

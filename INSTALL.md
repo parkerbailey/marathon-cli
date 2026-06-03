@@ -11,7 +11,7 @@ pip install marathon-cli
 ### From Source
 
 ```bash
-git clone https://github.com/yourusername/marathon-cli.git
+git clone https://github.com/parkerbailey/marathon-cli.git
 cd marathon-cli
 pip install .
 ```
@@ -53,7 +53,7 @@ For development or if you want to modify the code:
 
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/marathon-cli.git
+git clone https://github.com/parkerbailey/marathon-cli.git
 cd marathon-cli
 
 # Create virtual environment (optional but recommended)
@@ -74,7 +74,7 @@ mkdir -p ~/.local/share/marathon-cli
 cd ~/.local/share/marathon-cli
 
 # Clone and install
-git clone https://github.com/yourusername/marathon-cli.git .
+git clone https://github.com/parkerbailey/marathon-cli.git .
 python3 -m venv venv
 source venv/bin/activate
 pip install .

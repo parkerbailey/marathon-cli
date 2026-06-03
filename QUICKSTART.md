@@ -4,17 +4,17 @@
 
 ### Windows (PowerShell/Windows Terminal)
 ```powershell
-irm https://raw.githubusercontent.com/yourusername/marathon-cli/main/install-simple.ps1 | iex
+irm https://raw.githubusercontent.com/parkerbailey/marathon-cli/main/install-simple.ps1 | iex
 ```
 
 ### Linux/macOS
 ```bash
-curl -sSL https://raw.githubusercontent.com/yourusername/marathon-cli/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/parkerbailey/marathon-cli/main/install.sh | bash
 ```
 
 ### Any Platform (Python)
 ```bash
-pip install git+https://github.com/yourusername/marathon-cli.git
+pip install git+https://github.com/parkerbailey/marathon-cli.git
 ```
 
 ---
@@ -50,4 +50,4 @@ marathon-cli --help
 - **Installation Guide**: [INSTALL.md](INSTALL.md)
 - **Windows Guide**: [WINDOWS.md](WINDOWS.md)
 - **Full README**: [README.md](README.md)
-- **GitHub**: https://github.com/yourusername/marathon-cli
+- **GitHub**: https://github.com/parkerbailey/marathon-cli

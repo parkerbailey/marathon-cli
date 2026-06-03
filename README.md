@@ -15,37 +15,55 @@ A terminal-based monitoring tool for Bungie's Marathon game on Steam. Features r
 
 ## Installation
 
-### Quick Install (One-Liner)
+### Method 1: From GitHub (Recommended)
+
+Once the repository is on GitHub:
+
+```bash
+pip install git+https://github.com/parkerbailey/marathon-cli.git
+```
+
+**Or with pipx (isolated installation):**
+```bash
+pipx install git+https://github.com/parkerbailey/marathon-cli.git
+```
+
+### Method 2: From Source (Local)
+
+If you've cloned the repository:
+
+```bash
+git clone https://github.com/parkerbailey/marathon-cli.git
+cd marathon-cli
+pip install .
+```
+
+**Or for development (editable install):**
+```bash
+pip install -e .
+```
+
+### Method 3: From Wheel File
+
+If you have the `.whl` file:
+
+```bash
+pip install marathon_cli-0.1.0-py3-none-any.whl
+```
+
+### One-Liner Install Scripts
 
 **Windows (PowerShell):**
 ```powershell
-irm https://raw.githubusercontent.com/yourusername/marathon-cli/main/install-simple.ps1 | iex
+irm https://raw.githubusercontent.com/parkerbailey/marathon-cli/main/install-simple.ps1 | iex
 ```
 
 **Linux/macOS:**
 ```bash
-curl -sSL https://raw.githubusercontent.com/yourusername/marathon-cli/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/parkerbailey/marathon-cli/main/install.sh | bash
 ```
 
-### From PyPI (once published)
-
-```bash
-pip install marathon-cli
-```
-
-### From GitHub
-
-```bash
-pip install git+https://github.com/yourusername/marathon-cli.git
-```
-
-### From Source
-
-```bash
-git clone https://github.com/yourusername/marathon-cli.git
-cd marathon-cli
-pip install -e .
-```
+*Note: One-liner scripts only work after pushing to GitHub*
 
 ## Usage
 
@@ -121,7 +139,7 @@ The graph bars are colored based on server status when data was recorded:
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/marathon-cli.git
+git clone https://github.com/parkerbailey/marathon-cli.git
 cd marathon-cli
 
 # Create virtual environment

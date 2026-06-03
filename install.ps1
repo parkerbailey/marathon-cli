@@ -1,6 +1,6 @@
 #!/usr/bin/env pwsh
 # Marathon CLI Installer for Windows
-# Usage: irm https://raw.githubusercontent.com/yourusername/marathon-cli/main/install.ps1 | iex
+# Usage: irm https://raw.githubusercontent.com/parkerbailey/marathon-cli/main/install.ps1 | iex
 
 $ErrorActionPreference = "Stop"
 
@@ -55,19 +55,19 @@ switch ($choice) {
         }
 
         Write-Host "Installing marathon-cli..." -ForegroundColor Cyan
-        & pipx install git+https://github.com/yourusername/marathon-cli.git
+        & pipx install git+https://github.com/parkerbailey/marathon-cli.git
     }
     "2" {
         # Install with pip --user
         Write-Host ""
         Write-Host "Installing with pip --user..." -ForegroundColor Cyan
-        & python -m pip install --user git+https://github.com/yourusername/marathon-cli.git
+        & python -m pip install --user git+https://github.com/parkerbailey/marathon-cli.git
     }
     "3" {
         # Install with pip (global)
         Write-Host ""
         Write-Host "Installing globally..." -ForegroundColor Cyan
-        & python -m pip install git+https://github.com/yourusername/marathon-cli.git
+        & python -m pip install git+https://github.com/parkerbailey/marathon-cli.git
     }
     default {
         Write-Host "Invalid choice. Exiting." -ForegroundColor Red

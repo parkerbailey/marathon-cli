@@ -36,9 +36,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/marathon-cli"
-Repository = "https://github.com/yourusername/marathon-cli"
-Issues = "https://github.com/yourusername/marathon-cli/issues"
+Homepage = "https://github.com/parkerbailey/marathon-cli"
+Repository = "https://github.com/parkerbailey/marathon-cli"
+Issues = "https://github.com/parkerbailey/marathon-cli/issues"
 
 [project.scripts]
 marathon-cli = "marathon_cli:cli"

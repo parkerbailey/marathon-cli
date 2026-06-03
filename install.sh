@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Marathon CLI Installer for Linux/macOS
-# Usage: curl -sSL https://raw.githubusercontent.com/yourusername/marathon-cli/main/install.sh | bash
+# Usage: curl -sSL https://raw.githubusercontent.com/parkerbailey/marathon-cli/main/install.sh | bash
 
 set -e
 
@@ -29,7 +29,7 @@ fi
 # Install with pip
 echo ""
 echo "Installing marathon-cli..."
-python3 -m pip install --user git+https://github.com/yourusername/marathon-cli.git
+python3 -m pip install --user git+https://github.com/parkerbailey/marathon-cli.git
 
 echo ""
 echo "✓ Installation complete!"
