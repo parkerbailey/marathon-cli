@@ -32,7 +32,7 @@ running = True
 last_fetch_time = None
 current_data = {"success": False, "count": 0, "marathon_status": "unknown", "reports_10m": 0, "platforms": {}}
 history_points = []
-MAX_HISTORY_POINTS = 16
+MAX_HISTORY_POINTS = 100  # Store plenty of history for any terminal width
 STATS_BOX_HEIGHT = 7  # top border + title + separator + 3 data rows + bottom border
 previous_status = None
 is_refreshing = False
@@ -131,7 +131,21 @@ def render_vertical_bar_chart(values, height=5, width=8):
         clean_values = [0]
     min_v = min(clean_values)
     max_v = max(clean_values)
-    span = max_v - min_v or 1
+
+    # Better scaling: ensure minimum range for small variations
+    span = max_v - min_v
+    if span == 0:
+        # All values are the same - show them in the middle
+        span = 1
+        min_v = max_v - 0.5
+    elif span < (max_v * 0.1):  # If range is less than 10% of max value
+        # Expand range to show relative differences better
+        center = (max_v + min_v) / 2
+        span = max(max_v * 0.1, 100)  # At least 10% of max or 100 units
+        min_v = center - span / 2
+        max_v = center + span / 2
+        span = max_v - min_v
+
     heights = []
     for value in counts:
         if value is None:
