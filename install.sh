@@ -26,10 +26,26 @@ if [ "$MAJOR" -lt 3 ] || ([ "$MAJOR" -eq 3 ] && [ "$MINOR" -lt 8 ]); then
     exit 1
 fi
 
-# Install with pip
-echo ""
-echo "Installing marathon-cli..."
-python3 -m pip install --user git+https://github.com/parkerbailey/marathon-cli.git
+# Check if pipx is available
+if command -v pipx &> /dev/null; then
+    echo ""
+    echo "Installing marathon-cli with pipx..."
+    pipx install git+https://github.com/parkerbailey/marathon-cli.git
+elif command -v apt &> /dev/null; then
+    # Debian/Ubuntu system - recommend pipx
+    echo ""
+    echo "Installing pipx first (recommended for CLI tools)..."
+    sudo apt install -y pipx
+    pipx ensurepath
+    echo ""
+    echo "Installing marathon-cli with pipx..."
+    pipx install git+https://github.com/parkerbailey/marathon-cli.git
+else
+    # Try pip with --user flag
+    echo ""
+    echo "Installing marathon-cli with pip..."
+    python3 -m pip install --user git+https://github.com/parkerbailey/marathon-cli.git
+fi
 
 echo ""
 echo "✓ Installation complete!"

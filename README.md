@@ -15,20 +15,34 @@ A terminal-based monitoring tool for Bungie's Marathon game on Steam. Features r
 
 ## Installation
 
-### Method 1: From GitHub (Recommended)
+### Method 1: Using pipx (Recommended)
 
-Once the repository is on GitHub:
+**Best for CLI tools - isolated installation:**
 
 ```bash
-pip install git+https://github.com/parkerbailey/marathon-cli.git
-```
+# Install pipx if you don't have it
+# Debian/Ubuntu:
+sudo apt install pipx
+# macOS:
+brew install pipx
 
-**Or with pipx (isolated installation):**
-```bash
+# Ensure pipx is in PATH
+pipx ensurepath
+
+# Install marathon-cli
 pipx install git+https://github.com/parkerbailey/marathon-cli.git
 ```
 
-### Method 2: From Source (Local)
+### Method 2: From GitHub with pip
+
+**If you prefer pip:**
+
+```bash
+# May require --break-system-packages on newer Debian/Ubuntu
+pip install --user git+https://github.com/parkerbailey/marathon-cli.git
+```
+
+### Method 3: From Source (Local)
 
 If you've cloned the repository:
 
@@ -43,7 +57,7 @@ pip install .
 pip install -e .
 ```
 
-### Method 3: From Wheel File
+### Method 4: From Wheel File
 
 If you have the `.whl` file:
 
@@ -51,7 +65,7 @@ If you have the `.whl` file:
 pip install marathon_cli-0.1.0-py3-none-any.whl
 ```
 
-### One-Liner Install Scripts
+### Method 5: One-Liner Install Scripts
 
 **Windows (PowerShell):**
 ```powershell
