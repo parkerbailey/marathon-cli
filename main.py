@@ -11,6 +11,7 @@ import signal
 import threading
 
 MARATHON_APP_ID = 3065800
+MARATHON_STATUS_API = "https://marathonstatus.com/index.php?action=status"
 
 # Marathon Graphic Realism color palette
 COLORS = {
@@ -27,10 +28,10 @@ COLORS = {
 # Global state
 running = True
 last_fetch_time = None
-current_data = {"success": False, "count": 0}
+current_data = {"success": False, "count": 0, "marathon_status": "unknown", "reports_10m": 0, "platforms": {}}
 history_points = []
 MAX_HISTORY_POINTS = 16
-STATS_BOX_HEIGHT = 8
+STATS_BOX_HEIGHT = 7  # top border + separator + 4 rows + bottom border
 
 data_lock = threading.Lock()
 display_lock = threading.Lock()
@@ -85,6 +86,65 @@ def show_refresh_indicator():
 
 def clear_refresh_indicator():
     update_refresh_indicator("")
+
+
+def render_vertical_bar_chart(values, height=5, width=8):
+    """Render a vertical bar chart to fill the box height."""
+    points = list(values[-width:])
+    if not points:
+        points = [0] * width
+    clean_values = [v for v in points if v is not None]
+    if not clean_values:
+        clean_values = [0]
+    min_v = min(clean_values)
+    max_v = max(clean_values)
+    span = max_v - min_v or 1
+    heights = []
+    for value in points:
+        if value is None:
+            heights.append(0)
+        else:
+            heights.append(int((value - min_v) / span * (height - 1)) + 1)
+    rows = []
+    for row in range(height, 0, -1):
+        rows.append(''.join('█' if h >= row else ' ' for h in heights))
+    return rows
+
+
+def get_marathon_server_status() -> dict:
+    """Fetch Marathon server status from MarathonStatus.com."""
+    try:
+        resp = requests.get(MARATHON_STATUS_API, params={"_": int(time.time() * 1000)}, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("ok"):
+            return {
+                "success": True,
+                "status": data.get("status", "unknown"),
+                "reports_10m": data.get("reports_10m", 0),
+                "platforms": data.get("platforms", {}),
+                "bungie_ok": data.get("bungie_ok", False),
+                "bungie_available": data.get("bungie_available", False),
+            }
+        return {"success": False, "status": "unknown", "error": data.get("error", "status request failed")}
+    except requests.RequestException as e:
+        return {"success": False, "status": "unknown", "error": str(e)}
+
+
+def format_marathon_status_line(status: str, reports: int) -> tuple[str, str]:
+    status_key = str(status or "unknown").lower()
+    if status_key == "outage":
+        return ("OUTAGE", COLORS['orange'])
+    if status_key == "degraded":
+        return ("DEGRADED", COLORS['orange'])
+    if status_key in ("online", "operational", "all systems operational"):
+        return ("ONLINE", COLORS['bright_green'])
+    if status_key == "maintenance":
+        return ("MAINTENANCE", COLORS['orange'])
+    if status_key == "checking":
+        return ("CHECKING", COLORS['cyan'])
+    return (status_key.upper(), COLORS['cyan'])
+
 
 def append_history_point(value):
     """Append a new history point, keeping the history bounded."""
@@ -148,10 +208,9 @@ def animate_banner(text: str, font: str = 'slant', color_key: str = 'cyan', spee
             time.sleep(0.1)
 
 def animate_loading_bar(duration: float = 1.0, width: int = 40):
-    """Animates a chunky loading bar."""
-    sys.stdout.write(f"\n{COLORS['cyan']}INITIALIZING SYSTEM...{COLORS['reset']}\n")
-    
+    """Animates a chunky loading bar and clears it after completion."""
     total_steps = int(duration / 0.05)
+    max_line_length = width + 5
     
     for i in range(total_steps + 1):
         progress = i / total_steps
@@ -159,14 +218,14 @@ def animate_loading_bar(duration: float = 1.0, width: int = 40):
         remaining = width - filled
         
         bar = f"{COLORS['bright_green']}" + "█" * filled + f"{COLORS['slate']}" + "░" * remaining + f"{COLORS['reset']}"
-        
         sys.stdout.write(f"\r{bar} {int(progress * 100)}%")
         sys.stdout.flush()
         time.sleep(0.05)
     
-    sys.stdout.write("\n")
+    sys.stdout.write("\r" + " " * max_line_length + "\r")
+    sys.stdout.flush()
 
-def print_motd():
+def print_motd(server_line=None):
     """Prints the animated MOTD."""
     animate_banner("MARATHON-CLI", font='slant', color_key='cyan', speed=0.08)
     
@@ -176,11 +235,15 @@ def print_motd():
     sys.stdout.flush()
     time.sleep(0.3)
     
+    sys.stdout.write("\n")
     animate_loading_bar(duration=1.5)
     
     c = COLORS
     sys.stdout.write(f"{c['slate']}{'='*60}{c['reset']}\n")
-    sys.stdout.write(f"{c['cyan']}  SYSTEM STATUS{c['reset']}  {c['bold']}ONLINE{c['reset']}\n")
+    if server_line is None:
+        sys.stdout.write(f"{c['cyan']}  MARATHON STATUS{c['reset']}  {c['bold']}CHECKING{c['reset']}\n")
+    else:
+        sys.stdout.write(f"{server_line}\n")
     sys.stdout.write(f"{c['slate']}{'='*60}{c['reset']}\n\n")
     sys.stdout.flush()
 
@@ -190,43 +253,32 @@ def render_stats_box(result: dict, last_update: datetime, history=None):
         history = []
     c = COLORS
     INNER_WIDTH = 50
-    
-    if result["success"]:
-        count = result["count"]
-        
-        title_line = f"{c['bold']}CURRENT RUNNER COUNT{c['reset']}"
-        active_line = f"{c['lime']}{c['bold']}Active:{c['reset']} {c['bright_green']}{count:,}{c['reset']}"
+    GRAPH_WIDTH = 8
+
+    title_line = f"{c['bold']}RUNNER STATS{c['reset']}"
+    elapsed = (datetime.now() - last_update).seconds
+    sync_line = f"{c['slate']}Last Sync:{c['reset']} {c['cyan']}{elapsed}s ago{c['reset']}"
+
+    if result.get("success"):
+        active_line = f"{c['lime']}{c['bold']}Active:{c['reset']} {c['bright_green']}{result.get('count', 0):,}{c['reset']}"
         appid_line = f"{c['slate']}App ID:{c['reset']} {c['cyan']}{MARATHON_APP_ID}{c['reset']}"
-        
-        elapsed = (datetime.now() - last_update).seconds
-        sync_line = f"{c['slate']}Last Sync:{c['reset']} {c['cyan']}{elapsed}s ago{c['reset']}"
-        graph_line = f"{c['slate']}Trend:{c['reset']} {render_sparkline(history)}"
-        
-        sys.stdout.write(f"{c['cyan']}┌{'─'*INNER_WIDTH}┐{c['reset']}\n")
-        sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + title_line, INNER_WIDTH)}{c['cyan']}│{c['reset']}\n")
-        sys.stdout.write(f"{c['cyan']}├{'─'*INNER_WIDTH}┤{c['reset']}\n")
-        sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + active_line, INNER_WIDTH)}{c['cyan']}│{c['reset']}\n")
-        sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + appid_line, INNER_WIDTH)}{c['cyan']}│{c['reset']}\n")
-        sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + graph_line, INNER_WIDTH)}{c['cyan']}│{c['reset']}\n")
-        sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + sync_line, INNER_WIDTH)}{c['cyan']}│{c['reset']}\n")
-        sys.stdout.write(f"{c['cyan']}└{'─'*INNER_WIDTH}┘{c['reset']}\n")
-        sys.stdout.flush()
+        left_rows = [title_line, active_line, appid_line, sync_line]
     else:
-        title_line = f"{c['bold']}CURRENT RUNNER COUNT{c['reset']}"
-        error_line = f"{c['orange']}⚠ ERROR: {result['error']}{c['reset']}"
+        error_line = f"{c['orange']}⚠ ERROR: {result.get('error', 'unknown')}{c['reset']}"
         appid_line = f"{c['slate']}App ID:{c['reset']} {c['cyan']}{MARATHON_APP_ID}{c['reset']}"
-        sync_line = f"{c['slate']}Last Sync:{c['reset']} {c['cyan']}FAILED{c['reset']}"
-        graph_line = f"{c['slate']}Trend:{c['reset']} {render_sparkline(history)}"
-        
-        sys.stdout.write(f"{c['cyan']}┌{'─'*INNER_WIDTH}┐{c['reset']}\n")
-        sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + title_line, INNER_WIDTH)}{c['cyan']}│{c['reset']}\n")
-        sys.stdout.write(f"{c['cyan']}├{'─'*INNER_WIDTH}┤{c['reset']}\n")
-        sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + error_line, INNER_WIDTH)}{c['cyan']}│{c['reset']}\n")
-        sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + appid_line, INNER_WIDTH)}{c['cyan']}│{c['reset']}\n")
-        sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + graph_line, INNER_WIDTH)}{c['cyan']}│{c['reset']}\n")
-        sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + sync_line, INNER_WIDTH)}{c['cyan']}│{c['reset']}\n")
-        sys.stdout.write(f"{c['cyan']}└{'─'*INNER_WIDTH}┘{c['reset']}\n")
-        sys.stdout.flush()
+        left_rows = [title_line, error_line, appid_line, sync_line]
+
+    content_width = INNER_WIDTH - GRAPH_WIDTH - 2
+    graph_rows = render_vertical_bar_chart(history, height=len(left_rows), width=GRAPH_WIDTH)
+
+    sys.stdout.write(f"{c['cyan']}┌{'─'*INNER_WIDTH}┐{c['reset']}\n")
+    for i, row_text in enumerate(left_rows):
+        graph_text = (graph_rows[i] if i < len(graph_rows) else ' ' * GRAPH_WIDTH).ljust(GRAPH_WIDTH)
+        sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + row_text, content_width)}  {graph_text}{c['cyan']}│{c['reset']}\n")
+        if i == 0:
+            sys.stdout.write(f"{c['cyan']}├{'─'*INNER_WIDTH}┤{c['reset']}\n")
+    sys.stdout.write(f"{c['cyan']}└{'─'*INNER_WIDTH}┘{c['reset']}\n")
+    sys.stdout.flush()
 
 def update_display():
     """Update only the stats box without clearing the screen."""
@@ -250,13 +302,24 @@ def data_fetcher(update_interval: int = 60):
     
     while running:
         show_refresh_indicator()
-        result = get_current_players(MARATHON_APP_ID)
+        player_result = get_current_players(MARATHON_APP_ID)
+        status_result = get_marathon_server_status()
         clear_refresh_indicator()
         
+        combined_result = {
+            "success": player_result.get("success", False),
+            "count": player_result.get("count", 0),
+            "error": player_result.get("error"),
+            "marathon_status": status_result.get("status", "unknown"),
+            "reports_10m": status_result.get("reports_10m", 0),
+            "platforms": status_result.get("platforms", {}),
+            "status_error": status_result.get("error"),
+        }
+        
         with data_lock:
-            current_data = result
+            current_data = combined_result
             last_fetch_time = datetime.now()
-        append_history_point(result['count'] if result.get('success') else None)
+        append_history_point(combined_result['count'] if combined_result.get('success') else None)
         
         time.sleep(update_interval)
 
@@ -266,21 +329,35 @@ def live_monitor(update_interval: int = 60):
     
     c = COLORS
     
-    # Initial display
-    print_motd()
+    # Initial fetch
+    player_result = get_current_players(MARATHON_APP_ID)
+    status_result = get_marathon_server_status()
+    status_label, status_color = format_marathon_status_line(status_result.get('status', 'unknown'), status_result.get('reports_10m', 0))
+    server_line = f"{COLORS['slate']}SERVER STATUS:{COLORS['reset']} {status_color}{status_label}{COLORS['reset']}"
+    if status_result.get('reports_10m', 0):
+        server_line = f"{server_line} {COLORS['slate']}({status_result['reports_10m']} rpt){COLORS['reset']}"
+    
+    print_motd(server_line)
     
     # Start data fetcher in background thread
     fetch_thread = threading.Thread(target=data_fetcher, args=(update_interval,), daemon=True)
     fetch_thread.start()
     
-    # Initial fetch
-    result = get_current_players(MARATHON_APP_ID)
     last_fetch_time = datetime.now()
+    combined_result = {
+        "success": player_result.get("success", False),
+        "count": player_result.get("count", 0),
+        "error": player_result.get("error"),
+        "marathon_status": status_result.get("status", "unknown"),
+        "reports_10m": status_result.get("reports_10m", 0),
+        "platforms": status_result.get("platforms", {}),
+        "status_error": status_result.get("error"),
+    }
     with data_lock:
-        current_data = result
-    append_history_point(result['count'] if result.get('success') else None)
+        current_data = combined_result
+    append_history_point(combined_result['count'] if combined_result.get('success') else None)
     
-    render_stats_box(result, last_fetch_time, history_points.copy())
+    render_stats_box(combined_result, last_fetch_time, history_points.copy())
     
     sys.stdout.write(f"{c['dim']}  Press Ctrl+C to exit{c['reset']}\n")
     sys.stdout.flush()
@@ -317,8 +394,9 @@ def status(output_json):
     c = COLORS
     
     if output_json:
-        result = get_current_players(MARATHON_APP_ID)
-        click.echo(f'{{"success": {str(result["success"]).lower()}, "count": {result.get("count", "null")}}}')
+        player_result = get_current_players(MARATHON_APP_ID)
+        status_result = get_marathon_server_status()
+        click.echo(f'{{"success": {str(player_result["success"]).lower()}, "count": {player_result.get("count", "null")}, "marathon_status": "{status_result.get("status", "unknown")}"}}')
         return
     
     print_motd()
@@ -326,14 +404,18 @@ def status(output_json):
     
     title_line = f"{c['bold']}SYSTEM STATUS{c['reset']}"
     
-    result = get_current_players(MARATHON_APP_ID)
-    if result["success"]:
+    player_result = get_current_players(MARATHON_APP_ID)
+    status_result = get_marathon_server_status()
+    status_label, status_color = format_marathon_status_line(status_result.get('status', 'unknown'), status_result.get('reports_10m', 0))
+    marathon_line = f"{c['lime']}●{c['reset']} Marathon: {status_color}{status_label}{c['reset']}"
+    if status_result.get('reports_10m', 0):
+        marathon_line = f"{marathon_line} {c['slate']}({status_result['reports_10m']} rpt){c['reset']}"
+
+    if player_result["success"]:
         steam_line = f"{c['lime']}●{c['reset']} Steam API: {c['bright_green']}OPERATIONAL{c['reset']}"
-        marathon_line = f"{c['lime']}●{c['reset']} Marathon: {c['bright_green']}ONLINE{c['reset']}"
-        runners_line = f"{c['lime']}●{c['reset']} Runners: {c['cyan']}{result['count']:,}{c['reset']}"
+        runners_line = f"{c['lime']}●{c['reset']} Runners: {c['cyan']}{player_result['count']:,}{c['reset']}"
     else:
         steam_line = f"{c['orange']}●{c['reset']} Steam API: {c['orange']}ERROR{c['reset']}"
-        marathon_line = f"{c['orange']}●{c['reset']} Marathon: {c['orange']}UNREACHABLE{c['reset']}"
         runners_line = f"{c['orange']}●{c['reset']} Runners: N/A{c['reset']}"
     
     sys.stdout.write(f"{c['cyan']}┌{'─'*INNER_WIDTH}┐{c['reset']}\n")
