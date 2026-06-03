@@ -4,6 +4,7 @@ import click
 import sys
 import time
 import random
+import shutil
 from datetime import datetime
 from pyfiglet import Figlet
 import re
@@ -31,7 +32,8 @@ last_fetch_time = None
 current_data = {"success": False, "count": 0, "marathon_status": "unknown", "reports_10m": 0, "platforms": {}}
 history_points = []
 MAX_HISTORY_POINTS = 16
-STATS_BOX_HEIGHT = 7  # top border + separator + 4 rows + bottom border
+STATS_BOX_HEIGHT = 7  # top border + title + separator + 3 data rows + bottom border
+previous_status = None
 
 data_lock = threading.Lock()
 display_lock = threading.Lock()
@@ -72,6 +74,12 @@ def clear_screen():
     sys.stdout.write("\033[2J\033[H")
     sys.stdout.flush()
 
+def get_terminal_width(default: int = 80) -> int:
+    try:
+        return shutil.get_terminal_size(fallback=(default, 24)).columns
+    except Exception:
+        return default
+
 def update_refresh_indicator(message: str):
     """Write a temporary refresh status on the reserved footer line."""
     with display_lock:
@@ -107,7 +115,7 @@ def render_vertical_bar_chart(values, height=5, width=8):
             heights.append(int((value - min_v) / span * (height - 1)) + 1)
     rows = []
     for row in range(height, 0, -1):
-        rows.append(''.join('█' if h >= row else ' ' for h in heights))
+        rows.append(''.join('▇' if h >= row else '·' for h in heights))
     return rows
 
 
@@ -225,6 +233,34 @@ def animate_loading_bar(duration: float = 1.0, width: int = 40):
     sys.stdout.write("\r" + " " * max_line_length + "\r")
     sys.stdout.flush()
 
+def animate_status_ripple(width: int, status_color: str, speed: float = 0.015):
+    """Animate a ripple effect across the status line."""
+    c = COLORS
+    for i in range(width):
+        sys.stdout.write(f"\r{c['slate']}{'='*i}{status_color}{'='*(width-i)}{c['reset']}")
+        sys.stdout.flush()
+        time.sleep(speed)
+    time.sleep(0.1)
+    sys.stdout.write(f"\r{c['slate']}{'='*width}{c['reset']}")
+    sys.stdout.flush()
+
+def blink_status_text(duration: float = 0.3):
+    """Blink the status line briefly."""
+    c = COLORS
+    for _ in range(3):
+        sys.stdout.write("\033[s")
+        sys.stdout.write("\033[2A")
+        sys.stdout.write(f"{c['reset']}" + " " * 80 + "\n")
+        sys.stdout.write("\033[u")
+        sys.stdout.flush()
+        time.sleep(duration / 6)
+        sys.stdout.write("\033[s")
+        sys.stdout.write("\033[2A")
+        # Restore the status line (will be redrawn by caller)
+        sys.stdout.write("\033[u")
+        sys.stdout.flush()
+        time.sleep(duration / 6)
+
 def print_motd(server_line=None):
     """Prints the animated MOTD."""
     animate_banner("MARATHON-CLI", font='slant', color_key='cyan', speed=0.08)
@@ -239,21 +275,24 @@ def print_motd(server_line=None):
     animate_loading_bar(duration=1.5)
     
     c = COLORS
-    sys.stdout.write(f"{c['slate']}{'='*60}{c['reset']}\n")
+    width = get_terminal_width(80)
+    sys.stdout.write(f"{c['slate']}{'='*width}{c['reset']}\n")
     if server_line is None:
         sys.stdout.write(f"{c['cyan']}  MARATHON STATUS{c['reset']}  {c['bold']}CHECKING{c['reset']}\n")
     else:
         sys.stdout.write(f"{server_line}\n")
-    sys.stdout.write(f"{c['slate']}{'='*60}{c['reset']}\n\n")
+    sys.stdout.write(f"{c['slate']}{'='*width}{c['reset']}\n")
     sys.stdout.flush()
 
 def render_stats_box(result: dict, last_update: datetime, history=None):
-    """Render the stats box with current data."""
+    """Render the stats box with current data, and graph to the right."""
     if history is None:
         history = []
     c = COLORS
-    INNER_WIDTH = 50
-    GRAPH_WIDTH = 8
+    terminal_width = get_terminal_width(80)
+    BOX_WIDTH = max(30, terminal_width // 2)  # At least 30 chars for the box
+    GRAPH_BARS = 16  # Number of bars in the chart
+    GRAPH_PADDING = 2  # Spacing between box and graph
 
     title_line = f"{c['bold']}RUNNER STATS{c['reset']}"
     elapsed = (datetime.now() - last_update).seconds
@@ -268,16 +307,24 @@ def render_stats_box(result: dict, last_update: datetime, history=None):
         appid_line = f"{c['slate']}App ID:{c['reset']} {c['cyan']}{MARATHON_APP_ID}{c['reset']}"
         left_rows = [title_line, error_line, appid_line, sync_line]
 
-    content_width = INNER_WIDTH - GRAPH_WIDTH - 2
-    graph_rows = render_vertical_bar_chart(history, height=len(left_rows), width=GRAPH_WIDTH)
+    content_width = BOX_WIDTH - 2  # Account for box borders
+    graph_rows = render_vertical_bar_chart(history, height=5, width=GRAPH_BARS)
 
-    sys.stdout.write(f"{c['cyan']}┌{'─'*INNER_WIDTH}┐{c['reset']}\n")
-    for i, row_text in enumerate(left_rows):
-        graph_text = (graph_rows[i] if i < len(graph_rows) else ' ' * GRAPH_WIDTH).ljust(GRAPH_WIDTH)
-        sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + row_text, content_width)}  {graph_text}{c['cyan']}│{c['reset']}\n")
+    # Top border
+    sys.stdout.write(f"{c['cyan']}┌{'─'*content_width}┐{c['reset']}{' '*GRAPH_PADDING}")
+    sys.stdout.write(f"{c['slate']}Player Count History{c['reset']}\n")
+
+    # Content rows
+    for i in range(len(left_rows)):
+        row_text = left_rows[i]
+        graph_text = graph_rows[i] if i < len(graph_rows) else '·' * GRAPH_BARS
+        sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + row_text, content_width)}{c['cyan']}│{c['reset']}")
+        sys.stdout.write(f"{' '*GRAPH_PADDING}{c['cyan']}{graph_text}{c['reset']}\n")
         if i == 0:
-            sys.stdout.write(f"{c['cyan']}├{'─'*INNER_WIDTH}┤{c['reset']}\n")
-    sys.stdout.write(f"{c['cyan']}└{'─'*INNER_WIDTH}┘{c['reset']}\n")
+            sys.stdout.write(f"{c['cyan']}├{'─'*content_width}┤{c['reset']}\n")
+
+    # Bottom border
+    sys.stdout.write(f"{c['cyan']}└{'─'*content_width}┘{c['reset']}\n")
     sys.stdout.flush()
 
 def update_display():
@@ -291,14 +338,14 @@ def update_display():
     
     with display_lock:
         sys.stdout.write("\033[s")
-        sys.stdout.write(f"\033[{STATS_BOX_HEIGHT + 1}A")
+        sys.stdout.write(f"\033[{STATS_BOX_HEIGHT}A")
         render_stats_box(result, last_update, history_snapshot)
         sys.stdout.write("\033[u")
         sys.stdout.flush()
 
 def data_fetcher(update_interval: int = 60):
     """Background thread that fetches data periodically."""
-    global current_data, last_fetch_time, running
+    global current_data, last_fetch_time, running, previous_status
     
     while running:
         show_refresh_indicator()
@@ -316,16 +363,25 @@ def data_fetcher(update_interval: int = 60):
             "status_error": status_result.get("error"),
         }
         
+        new_status = combined_result.get("marathon_status", "unknown")
+        if previous_status is not None and new_status != previous_status:
+            _, status_color = format_marathon_status_line(new_status, combined_result.get('reports_10m', 0))
+            width = get_terminal_width(80)
+            animate_status_ripple(width, status_color)
+            time.sleep(0.2)
+            blink_status_text()
+        
         with data_lock:
             current_data = combined_result
             last_fetch_time = datetime.now()
+            previous_status = new_status
         append_history_point(combined_result['count'] if combined_result.get('success') else None)
         
         time.sleep(update_interval)
 
 def live_monitor(update_interval: int = 60):
     """Continuously monitor and update player count."""
-    global running, last_fetch_time, current_data
+    global running, last_fetch_time, current_data, previous_status
     
     c = COLORS
     
@@ -339,10 +395,6 @@ def live_monitor(update_interval: int = 60):
     
     print_motd(server_line)
     
-    # Start data fetcher in background thread
-    fetch_thread = threading.Thread(target=data_fetcher, args=(update_interval,), daemon=True)
-    fetch_thread.start()
-    
     last_fetch_time = datetime.now()
     combined_result = {
         "success": player_result.get("success", False),
@@ -355,12 +407,23 @@ def live_monitor(update_interval: int = 60):
     }
     with data_lock:
         current_data = combined_result
+        previous_status = combined_result.get("marathon_status", "unknown")
     append_history_point(combined_result['count'] if combined_result.get('success') else None)
+    
+    # Trigger initial ripple animation on the existing === line
+    status_label, status_color = format_marathon_status_line(combined_result.get("marathon_status", "unknown"), combined_result.get('reports_10m', 0))
+    width = get_terminal_width(80)
+    animate_status_ripple(width, status_color)
+    time.sleep(0.2)
+    
+    sys.stdout.write("\n")
+    sys.stdout.flush()
     
     render_stats_box(combined_result, last_fetch_time, history_points.copy())
     
-    sys.stdout.write(f"{c['dim']}  Press Ctrl+C to exit{c['reset']}\n")
-    sys.stdout.flush()
+    # Start data fetcher in background thread
+    fetch_thread = threading.Thread(target=data_fetcher, args=(update_interval,), daemon=True)
+    fetch_thread.start()
     
     # Live update loop - update display every second
     while running:
@@ -400,8 +463,7 @@ def status(output_json):
         return
     
     print_motd()
-    INNER_WIDTH = 50
-    
+    INNER_WIDTH = max(50, get_terminal_width(80) - 2)
     title_line = f"{c['bold']}SYSTEM STATUS{c['reset']}"
     
     player_result = get_current_players(MARATHON_APP_ID)
