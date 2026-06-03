@@ -28,6 +28,10 @@ COLORS = {
 running = True
 last_fetch_time = None
 current_data = {"success": False, "count": 0}
+history_points = []
+MAX_HISTORY_POINTS = 16
+STATS_BOX_HEIGHT = 8
+
 data_lock = threading.Lock()
 display_lock = threading.Lock()
 
@@ -81,6 +85,35 @@ def show_refresh_indicator():
 
 def clear_refresh_indicator():
     update_refresh_indicator("")
+
+def append_history_point(value):
+    """Append a new history point, keeping the history bounded."""
+    with data_lock:
+        history_points.append(value)
+        if len(history_points) > MAX_HISTORY_POINTS:
+            history_points.pop(0)
+
+
+def render_sparkline(values, width=MAX_HISTORY_POINTS):
+    """Render a compact sparkline from recent values."""
+    spark_chars = '▁▂▃▄▅▆▇█'
+    points = list(values[-width:])
+    if not points:
+        return ' ' * width
+    clean = [v for v in points if v is not None]
+    if not clean:
+        return '·' * len(points)
+    min_v = min(clean)
+    max_v = max(clean)
+    span = max_v - min_v or 1
+    rendered = []
+    for value in points:
+        if value is None:
+            rendered.append('·')
+        else:
+            idx = int((value - min_v) / span * (len(spark_chars) - 1))
+            rendered.append(spark_chars[idx])
+    return ''.join(rendered).rjust(width)
 
 def glitch_effect(text: str, color_key: str = 'cyan') -> str:
     """Adds a random glitch effect to a line."""
@@ -151,8 +184,10 @@ def print_motd():
     sys.stdout.write(f"{c['slate']}{'='*60}{c['reset']}\n\n")
     sys.stdout.flush()
 
-def render_stats_box(result: dict, last_update: datetime):
+def render_stats_box(result: dict, last_update: datetime, history=None):
     """Render the stats box with current data."""
+    if history is None:
+        history = []
     c = COLORS
     INNER_WIDTH = 50
     
@@ -165,12 +200,14 @@ def render_stats_box(result: dict, last_update: datetime):
         
         elapsed = (datetime.now() - last_update).seconds
         sync_line = f"{c['slate']}Last Sync:{c['reset']} {c['cyan']}{elapsed}s ago{c['reset']}"
+        graph_line = f"{c['slate']}Trend:{c['reset']} {render_sparkline(history)}"
         
         sys.stdout.write(f"{c['cyan']}┌{'─'*INNER_WIDTH}┐{c['reset']}\n")
         sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + title_line, INNER_WIDTH)}{c['cyan']}│{c['reset']}\n")
         sys.stdout.write(f"{c['cyan']}├{'─'*INNER_WIDTH}┤{c['reset']}\n")
         sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + active_line, INNER_WIDTH)}{c['cyan']}│{c['reset']}\n")
         sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + appid_line, INNER_WIDTH)}{c['cyan']}│{c['reset']}\n")
+        sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + graph_line, INNER_WIDTH)}{c['cyan']}│{c['reset']}\n")
         sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + sync_line, INNER_WIDTH)}{c['cyan']}│{c['reset']}\n")
         sys.stdout.write(f"{c['cyan']}└{'─'*INNER_WIDTH}┘{c['reset']}\n")
         sys.stdout.flush()
@@ -179,12 +216,14 @@ def render_stats_box(result: dict, last_update: datetime):
         error_line = f"{c['orange']}⚠ ERROR: {result['error']}{c['reset']}"
         appid_line = f"{c['slate']}App ID:{c['reset']} {c['cyan']}{MARATHON_APP_ID}{c['reset']}"
         sync_line = f"{c['slate']}Last Sync:{c['reset']} {c['cyan']}FAILED{c['reset']}"
+        graph_line = f"{c['slate']}Trend:{c['reset']} {render_sparkline(history)}"
         
         sys.stdout.write(f"{c['cyan']}┌{'─'*INNER_WIDTH}┐{c['reset']}\n")
         sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + title_line, INNER_WIDTH)}{c['cyan']}│{c['reset']}\n")
         sys.stdout.write(f"{c['cyan']}├{'─'*INNER_WIDTH}┤{c['reset']}\n")
         sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + error_line, INNER_WIDTH)}{c['cyan']}│{c['reset']}\n")
         sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + appid_line, INNER_WIDTH)}{c['cyan']}│{c['reset']}\n")
+        sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + graph_line, INNER_WIDTH)}{c['cyan']}│{c['reset']}\n")
         sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + sync_line, INNER_WIDTH)}{c['cyan']}│{c['reset']}\n")
         sys.stdout.write(f"{c['cyan']}└{'─'*INNER_WIDTH}┘{c['reset']}\n")
         sys.stdout.flush()
@@ -196,11 +235,12 @@ def update_display():
     with data_lock:
         result = current_data.copy()
         last_update = last_fetch_time
+        history_snapshot = history_points.copy()
     
     with display_lock:
         sys.stdout.write("\033[s")
-        sys.stdout.write(f"\033[{8}A")
-        render_stats_box(result, last_update)
+        sys.stdout.write(f"\033[{STATS_BOX_HEIGHT + 1}A")
+        render_stats_box(result, last_update, history_snapshot)
         sys.stdout.write("\033[u")
         sys.stdout.flush()
 
@@ -216,6 +256,7 @@ def data_fetcher(update_interval: int = 60):
         with data_lock:
             current_data = result
             last_fetch_time = datetime.now()
+        append_history_point(result['count'] if result.get('success') else None)
         
         time.sleep(update_interval)
 
@@ -237,8 +278,9 @@ def live_monitor(update_interval: int = 60):
     last_fetch_time = datetime.now()
     with data_lock:
         current_data = result
+    append_history_point(result['count'] if result.get('success') else None)
     
-    render_stats_box(result, last_fetch_time)
+    render_stats_box(result, last_fetch_time, history_points.copy())
     
     sys.stdout.write(f"{c['dim']}  Press Ctrl+C to exit{c['reset']}\n")
     sys.stdout.flush()
