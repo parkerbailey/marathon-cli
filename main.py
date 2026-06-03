@@ -7,6 +7,8 @@ import random
 from datetime import datetime
 from pyfiglet import Figlet
 import re
+import signal
+import threading
 
 MARATHON_APP_ID = 3065800
 
@@ -21,6 +23,24 @@ COLORS = {
     'bold': '\033[1m',
     'dim': '\033[2m',
 }
+
+# Global state
+running = True
+last_fetch_time = None
+current_data = {"success": False, "count": 0}
+data_lock = threading.Lock()
+display_lock = threading.Lock()
+
+def signal_handler(sig, frame):
+    """Handle Ctrl+C gracefully."""
+    global running
+    running = False
+    c = COLORS
+    sys.stdout.write(f"\n{c['cyan']}>> Connection terminated by user{c['reset']}\n")
+    sys.stdout.write(f"{c['slate']}{'='*60}{c['reset']}\n")
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
 
 def get_current_players(app_id: int) -> dict:
     url = "https://api.steampowered.com/ISteamUserStats/GetNumberOfCurrentPlayers/v1/"
@@ -47,9 +67,24 @@ def clear_screen():
     sys.stdout.write("\033[2J\033[H")
     sys.stdout.flush()
 
+def update_refresh_indicator(message: str):
+    """Write a temporary refresh status on the reserved footer line."""
+    with display_lock:
+        sys.stdout.write("\033[s")
+        sys.stdout.write("\033[2K")
+        sys.stdout.write(message)
+        sys.stdout.write("\033[u")
+        sys.stdout.flush()
+
+def show_refresh_indicator():
+    update_refresh_indicator(f"{COLORS['cyan']}  ⟳ Refreshing data...{COLORS['reset']}")
+
+def clear_refresh_indicator():
+    update_refresh_indicator("")
+
 def glitch_effect(text: str, color_key: str = 'cyan') -> str:
     """Adds a random glitch effect to a line."""
-    if random.random() > 0.8: # 20% chance to glitch
+    if random.random() > 0.8:
         glitch_chars = ['█', '▓', '░', '▒', '✖', '⚠']
         idx = random.randint(0, len(text) - 1)
         if text[idx] != ' ':
@@ -83,7 +118,6 @@ def animate_loading_bar(duration: float = 1.0, width: int = 40):
     """Animates a chunky loading bar."""
     sys.stdout.write(f"\n{COLORS['cyan']}INITIALIZING SYSTEM...{COLORS['reset']}\n")
     
-    blocks = ['▏', '▎', '▍', '▌', '▋', '▊', '▉', '█']
     total_steps = int(duration / 0.05)
     
     for i in range(total_steps + 1):
@@ -117,19 +151,20 @@ def print_motd():
     sys.stdout.write(f"{c['slate']}{'='*60}{c['reset']}\n\n")
     sys.stdout.flush()
 
-def print_player_stats(result: dict):
-    """Display player count with Marathon styling."""
+def render_stats_box(result: dict, last_update: datetime):
+    """Render the stats box with current data."""
     c = COLORS
     INNER_WIDTH = 50
     
     if result["success"]:
         count = result["count"]
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         title_line = f"{c['bold']}CURRENT RUNNER COUNT{c['reset']}"
         active_line = f"{c['lime']}{c['bold']}Active:{c['reset']} {c['bright_green']}{count:,}{c['reset']}"
         appid_line = f"{c['slate']}App ID:{c['reset']} {c['cyan']}{MARATHON_APP_ID}{c['reset']}"
-        sync_line = f"{c['slate']}Synced:{c['reset']} {c['cyan']}{timestamp}{c['reset']}"
+        
+        elapsed = (datetime.now() - last_update).seconds
+        sync_line = f"{c['slate']}Last Sync:{c['reset']} {c['cyan']}{elapsed}s ago{c['reset']}"
         
         sys.stdout.write(f"{c['cyan']}┌{'─'*INNER_WIDTH}┐{c['reset']}\n")
         sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + title_line, INNER_WIDTH)}{c['cyan']}│{c['reset']}\n")
@@ -137,32 +172,106 @@ def print_player_stats(result: dict):
         sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + active_line, INNER_WIDTH)}{c['cyan']}│{c['reset']}\n")
         sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + appid_line, INNER_WIDTH)}{c['cyan']}│{c['reset']}\n")
         sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + sync_line, INNER_WIDTH)}{c['cyan']}│{c['reset']}\n")
-        sys.stdout.write(f"{c['cyan']}└{'─'*INNER_WIDTH}┘{c['reset']}\n\n")
+        sys.stdout.write(f"{c['cyan']}└{'─'*INNER_WIDTH}┘{c['reset']}\n")
         sys.stdout.flush()
     else:
-        sys.stdout.write(f"{c['orange']}⚠ ERROR: {result['error']}{c['reset']}\n\n")
+        title_line = f"{c['bold']}CURRENT RUNNER COUNT{c['reset']}"
+        error_line = f"{c['orange']}⚠ ERROR: {result['error']}{c['reset']}"
+        appid_line = f"{c['slate']}App ID:{c['reset']} {c['cyan']}{MARATHON_APP_ID}{c['reset']}"
+        sync_line = f"{c['slate']}Last Sync:{c['reset']} {c['cyan']}FAILED{c['reset']}"
+        
+        sys.stdout.write(f"{c['cyan']}┌{'─'*INNER_WIDTH}┐{c['reset']}\n")
+        sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + title_line, INNER_WIDTH)}{c['cyan']}│{c['reset']}\n")
+        sys.stdout.write(f"{c['cyan']}├{'─'*INNER_WIDTH}┤{c['reset']}\n")
+        sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + error_line, INNER_WIDTH)}{c['cyan']}│{c['reset']}\n")
+        sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + appid_line, INNER_WIDTH)}{c['cyan']}│{c['reset']}\n")
+        sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + sync_line, INNER_WIDTH)}{c['cyan']}│{c['reset']}\n")
+        sys.stdout.write(f"{c['cyan']}└{'─'*INNER_WIDTH}┘{c['reset']}\n")
         sys.stdout.flush()
+
+def update_display():
+    """Update only the stats box without clearing the screen."""
+    global current_data, last_fetch_time
+    
+    with data_lock:
+        result = current_data.copy()
+        last_update = last_fetch_time
+    
+    with display_lock:
+        sys.stdout.write("\033[s")
+        sys.stdout.write(f"\033[{8}A")
+        render_stats_box(result, last_update)
+        sys.stdout.write("\033[u")
+        sys.stdout.flush()
+
+def data_fetcher(update_interval: int = 60):
+    """Background thread that fetches data periodically."""
+    global current_data, last_fetch_time, running
+    
+    while running:
+        show_refresh_indicator()
+        result = get_current_players(MARATHON_APP_ID)
+        clear_refresh_indicator()
+        
+        with data_lock:
+            current_data = result
+            last_fetch_time = datetime.now()
+        
+        time.sleep(update_interval)
+
+def live_monitor(update_interval: int = 60):
+    """Continuously monitor and update player count."""
+    global running, last_fetch_time, current_data
+    
+    c = COLORS
+    
+    # Initial display
+    print_motd()
+    
+    # Start data fetcher in background thread
+    fetch_thread = threading.Thread(target=data_fetcher, args=(update_interval,), daemon=True)
+    fetch_thread.start()
+    
+    # Initial fetch
+    result = get_current_players(MARATHON_APP_ID)
+    last_fetch_time = datetime.now()
+    with data_lock:
+        current_data = result
+    
+    render_stats_box(result, last_fetch_time)
+    
+    sys.stdout.write(f"{c['dim']}  Press Ctrl+C to exit{c['reset']}\n")
+    sys.stdout.flush()
+    
+    # Live update loop - update display every second
+    while running:
+        time.sleep(1)
+        
+        if not running:
+            break
+        
+        # Update the display in place (ticks up the sync counter)
+        update_display()
 
 @click.group(invoke_without_command=True)
 @click.pass_context
 def cli(ctx):
     """Marathon CLI — Stats and info for Bungie's Marathon."""
     if ctx.invoked_subcommand is None:
-        print_motd()
-        result = get_current_players(MARATHON_APP_ID)
-        print_player_stats(result)
+        live_monitor(update_interval=60)
 
 @cli.command()
 def players():
-    """Show current player count on Steam."""
+    """Show current player count on Steam (single snapshot)."""
     print_motd()
     result = get_current_players(MARATHON_APP_ID)
-    print_player_stats(result)
+    last_update = datetime.now()
+    render_stats_box(result, last_update)
 
 @cli.command()
 @click.option('--json', 'output_json', is_flag=True, help='Output as JSON')
 def status(output_json):
-    """Full system status check."""
+    """Full system status check (single snapshot)."""
     c = COLORS
     
     if output_json:
@@ -173,7 +282,6 @@ def status(output_json):
     print_motd()
     INNER_WIDTH = 50
     
-    # Build content strings first to avoid quote nesting issues
     title_line = f"{c['bold']}SYSTEM STATUS{c['reset']}"
     
     result = get_current_players(MARATHON_APP_ID)
@@ -194,6 +302,12 @@ def status(output_json):
     sys.stdout.write(f"{c['cyan']}│{c['reset']}{rpad('  ' + runners_line, INNER_WIDTH)}{c['cyan']}│{c['reset']}\n")
     sys.stdout.write(f"{c['cyan']}└{'─'*INNER_WIDTH}┘{c['reset']}\n\n")
     sys.stdout.flush()
+
+@cli.command()
+@click.option('--interval', '-i', default=60, help='Data refresh interval in seconds (default: 60)')
+def monitor(interval):
+    """Live monitor mode with continuous updates."""
+    live_monitor(update_interval=interval)
 
 if __name__ == "__main__":
     cli()
